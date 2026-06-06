@@ -1,3 +1,4 @@
+
 package com.jdr.payment.domain.factory;
 
 import com.jdr.payment.domain.models.AuthorizationResult;

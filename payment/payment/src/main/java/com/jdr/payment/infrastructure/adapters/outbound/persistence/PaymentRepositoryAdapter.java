@@ -1,8 +1,9 @@
 package com.jdr.payment.infrastructure.adapters.outbound.persistence;
 
 import com.jdr.payment.domain.models.AuthorizationResult;
-import com.jdr.payment.domain.models.Payment; // Asegúrate de que esta ruta a tu modelo Payment sea la correcta
+import com.jdr.payment.domain.models.Payment;
 import com.jdr.payment.infrastructure.adapters.outbound.persistence.entities.PaymentEntity;
+import com.jdr.payment.infrastructure.adapters.outbound.persistence.entities.AuthorizationResultEntity; // 🔍 Importa tu otra entidad
 import com.jdr.payment.ports.outbound.PaymentRepositoryPort;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -17,27 +18,42 @@ import java.util.Optional;
 @Slf4j
 public class PaymentRepositoryAdapter implements PaymentRepositoryPort {
 
-    private final JpaPaymentRepository jpaRepository; // Tu interfaz JpaRepository
+    private final JpaPaymentRepository jpaRepository; 
+    private final JpaAuthorizationResultRepository authResultRepository; // 🛠️ 1. Inyecta el repositorio de autorizaciones
 
     @Override
-    @Transactional(propagation = Propagation.REQUIRES_NEW) // Protege el INSERT ante fallos de red del proveedor externo
+    @Transactional(propagation = Propagation.REQUIRES_NEW) 
     public void save(Payment payment, AuthorizationResult result) {
         log.info("[SQL PERSISTENCE] Insertando registro completo en public.payments para Tx: {}", payment.transactionId());
         
         try {
-            // Mapeo completo utilizando los datos del pago y del resultado
-            PaymentEntity entity = PaymentEntity.builder()
-                    .id(payment.transactionId()) // varchar(50) -> PK
-                    .customerId(payment.customerId()) // varchar(50)
-                    .merchantId(payment.merchantId()) // varchar(50)
-                    .amount((payment.amount())) // numeric(15,2)
-                    .currency(payment.currency()) // varchar(3)
-                    .paymentMethod(payment.paymentMethod()) // varchar(20)
-                    .status(result.status()) // varchar(20) -> APPROVED / REJECTED
+            // 2. Guardamos en la tabla public.payments
+            PaymentEntity paymentEntity = PaymentEntity.builder()
+                    .id(payment.transactionId())
+                    .customerId(payment.customerId())
+                    .merchantId(payment.merchantId())
+                    .amount(payment.amount())
+                    .currency(payment.currency())
+                    .paymentMethod(payment.paymentMethod())
+                    .status(result.status()) 
                     .build();
 
-            jpaRepository.save(entity);
-            log.info("[SQL PERSISTENCE] ¡Registro guardado con éxito!");
+            jpaRepository.save(paymentEntity);
+            log.info("[SQL PERSISTENCE] ¡Registro de Pago guardado con éxito!");
+
+            // 🛠️ 3. MAPEO E INSERT EN LA TABLA public.authorization_results
+            log.info("[SQL PERSISTENCE] Insertando auditoría en public.authorization_results para Tx: {}", payment.transactionId());
+            
+            AuthorizationResultEntity authEntity = AuthorizationResultEntity.builder()
+                    .transactionId(result.transactionId())         // varchar(50) -> PK o FK
+                    .authorizationCode(result.authorizationCode()) // varchar(50) (puede ser null)
+                    .message(result.message())                     // varchar(255)
+                    .status(result.status())                       // varchar(20)
+                    .build();
+
+            authResultRepository.save(authEntity); // 👈 ¡Aquí llenamos la tabla vacía!
+            log.info("[SQL PERSISTENCE] ¡Registro de Autorización guardado con éxito!");
+
         } catch (Exception e) {
             log.error("[SQL PERSISTENCE ERROR] Error al insertar en Postgres: {}", e.getMessage());
             throw e;
@@ -49,10 +65,13 @@ public class PaymentRepositoryAdapter implements PaymentRepositoryPort {
     public Optional<AuthorizationResult> findById(String transactionId) {
         log.info("[SQL PERSISTENCE] Buscando autorización por ID: {}", transactionId);
         
+        // 🛠️ 4. Tip Senior: Si la tabla de verdad existe, tu consulta de abajo debería 
+        // buscar en 'authResultRepository' en lugar de calcular el código hash en caliente.
+        // Pero si el requerimiento de la prueba pide leer de la tabla 'payments', tu código actual está perfecto.
         return jpaRepository.findById(transactionId)
                 .map(entity -> AuthorizationResult.builder()
                         .transactionId(entity.getId())
-                        .status((entity.getStatus()))
+                        .status(entity.getStatus())
                         .authorizationCode(entity.getStatus().equals("APPROVED") ? "AUTH-" + Math.abs(entity.getId().hashCode()) : null)
                         .message("Payment found in database with status: " + entity.getStatus())
                         .build());

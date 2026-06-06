@@ -1,43 +1,44 @@
 package com.jdr.payment.infrastructure.adapters.outbound.feign;
 
+import com.jdr.payment.domain.models.Payment;
 import com.jdr.payment.ports.outbound.AntiFraudClientPort;
-import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import java.math.BigDecimal;
+import org.springframework.cache.annotation.Cacheable;
 
 @Component
 @RequiredArgsConstructor
 @Slf4j
 public class AntiFraudAdapter implements AntiFraudClientPort {
 
-    private final AntiFraudFeignClient feignClient;
+	private final AntiFraudFeignClient feignClient;
 
-    @Override
-    // Vincula este método al Circuit Breaker configurado en el application.yml
-    @CircuitBreaker(name = "antiFraudService", fallbackMethod = "fallbackCheckRiskStatus")
-    public String checkRiskStatus(String transactionId) {
-        log.info("[HTTP Request] Consultando proveedor externo antifraude para la transaccion: {}", transactionId);
-        
-        AntiFraudFeignClient.FraudCheckResponse response = feignClient.checkTransaction(transactionId);
-        
-        log.info("[HTTP Response] Proveedor respondió riesgo: {} para transaccion: {}", response.riskLevel(), transactionId);
-        return response.riskLevel();
-    }
+	// Asegúrate de importar la de Spring
 
-    /**
-     * Método Fallback que se ejecutará de forma automática si:
-     * 1. El proveedor externo responde un error HTTP (5xx, 4xx).
-     * 2. Se alcanza el Timeout configurado (ej. tarda más de 2 segundos).
-     * 3. El Circuit Breaker está en estado ABIERTO debido a fallas consecutivas.
-     */
-    public String fallbackCheckRiskStatus(String transactionId, Throwable exception) {
-        log.error("[Resilience4j Fallback] Activado para transaccion: {}. Motivo del fallo: {}", 
-                transactionId, exception.getMessage());
-        
-        // REQUERIMIENTO SENIOR DE NEGOCIO: Ante caídas del sistema de prevención de fraude, 
-        // la regla financiera más segura (estrategia conservadora) es asumir HIGH_RISK 
-        // para proteger el dinero del comercio, forzando un rechazo controlado.
-        return "HIGH_RISK";
-    }
+
+	@Override
+	// 🛠️ 'fraudCheck' coincide con el nombre del Bean. 
+	// Usamos el customerId o el transactionId según la estrategia. 
+	// El requerimiento dice "de una misma transacción", por ende la clave ideal es el transactionId.
+	@Cacheable(value = "fraudCheck", key = "#payment.transactionId")
+	public String checkRiskStatus(Payment payment) {
+	    
+	    // 💡 NOTA SENIOR: Si el flujo entra a ejecutar este método, significa que el dato NO estaba en la caché.
+	    // Si el dato ya hubiese estado en caché, Spring intercepta la llamada, no ejecuta este código y devuelve el valor directo.
+	    
+	    log.info("[ANTI-FRAUD VIA HTTP] Cache MISS - Consultando proveedor externo antifraude para Tx: {}", payment.transactionId());
+	    
+	    AntiFraudFeignClient.FraudCheckRequest requestBody = new AntiFraudFeignClient.FraudCheckRequest(
+	            payment.transactionId(),
+	            payment.customerId(),
+	            payment.amount()
+	    );
+	    
+	    AntiFraudFeignClient.FraudCheckResponse response = feignClient.checkTransaction(requestBody);
+	    
+	    log.info("[HTTP Response] Proveedor respondió riesgo: {} para Tx: {}", response.riskLevel(), payment.transactionId());
+	    return response.riskLevel();
+	}
 }

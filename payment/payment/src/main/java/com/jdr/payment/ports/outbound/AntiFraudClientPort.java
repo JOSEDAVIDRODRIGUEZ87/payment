@@ -1,5 +1,8 @@
 package com.jdr.payment.ports.outbound;
 
+import com.jdr.payment.domain.models.Payment;
+
 public interface AntiFraudClientPort {
-    String checkRiskStatus(String transactionId);
+    // 🛠️ Cambiamos String transactionId por Payment payment
+    String checkRiskStatus(Payment payment); 
 }

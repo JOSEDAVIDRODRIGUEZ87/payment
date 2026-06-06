@@ -1,18 +1,19 @@
 package com.jdr.payment.infrastructure.adapters.outbound.feign;
 
 import org.springframework.cloud.openfeign.FeignClient;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import java.math.BigDecimal;
 
-// El nombre y URL se manejan dinámicamente o se apuntan a una propiedad
 @FeignClient(name = "anti-fraud-external-service", url = "${external.api.anti-fraud.url:http://localhost:9090}")
 public interface AntiFraudFeignClient {
 
-    // Cambia el tipo de retorno por un DTO o un String según responda el tercero.
-    // Para simplificar el caso de uso, simulamos que responde un JSON mapeado a este Record local.
-    @GetMapping("/api/v1/fraud-check/{transactionId}")
-    FraudCheckResponse checkTransaction(@PathVariable("transactionId") String transactionId);
+    @PostMapping("/api/antifraud/validate")
+    FraudCheckResponse checkTransaction(@RequestBody FraudCheckRequest request);
 
-    // Registro auxiliar para estructurar la respuesta del proveedor externo
-    record FraudCheckResponse(String transactionId, String riskLevel) {}
+    // DTO de petición hacia el puerto 9090
+    record FraudCheckRequest(String transactionId, String customerId, BigDecimal amount) {}
+
+    // DTO de respuesta del puerto 9090
+    record FraudCheckResponse(String riskLevel, String reason) {}
 }
